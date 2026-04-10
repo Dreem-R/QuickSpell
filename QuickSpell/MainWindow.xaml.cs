@@ -6,8 +6,9 @@ using System.Net.Http;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Input;
-using System.Runtime.InteropServices; // Required for DllImport
-using System.Windows.Interop;         // Required for WindowInteropHelper
+using System.Runtime.InteropServices;
+using System.Windows.Interop;
+using Clipboard = System.Windows.Clipboard;
 
 namespace QuickSpell
 {
@@ -15,10 +16,13 @@ namespace QuickSpell
     {
         public bool RunOnStartup { get; set; } = false;
         public bool IsDarkTheme { get; set; } = true;
-        public string MagicCommand { get; set; } = "//settings";
+        public string MagicCommand { get; set; } = "//settings"; 
         public string KeybindString { get; set; } = "Alt + Space";
-        public uint HotkeyModifiers { get; set; } = 0x0001; // Default: Alt
-        public uint HotkeyKey { get; set; } = 0x20;         // Default: Space
+        public uint HotkeyModifiers { get; set; } = 0x0001;
+        public uint HotkeyKey { get; set; } = 0x20;
+
+        public bool UseDuckDuckGo { get; set; } = false;
+        public List<string> RecentSearches { get; set; } = new List<string>();
     }
     public partial class MainWindow : Window
     {
@@ -31,22 +35,18 @@ namespace QuickSpell
         [DllImport("user32.dll")]
         private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
 
-        // NEW: Import Kernel32 for the Memory Flush (using IntPtr for 64-bit safety)
         [DllImport("kernel32.dll")]
         private static extern bool SetProcessWorkingSetSize(IntPtr process, IntPtr minimumWorkingSetSize, IntPtr maximumWorkingSetSize);
 
-        // --- 2. DEFINE HOTKEY CONSTANTS ---
         private const int HOTKEY_ID = 9000;
         private const uint MOD_ALT = 0x0001;
         private const uint VK_SPACE = 0x20;
         private const int WM_HOTKEY = 0x0312;
 
-        // --- SETTINGS STATE VARIABLES ---
         private bool _inSettingsMode = false;
         private bool _isListeningForKeybind = false;
         private bool _isListeningForCommand = false;
 
-        // NEW: The permanent settings object and save path
         private AppSettings _settings = new AppSettings();
         private readonly string _settingsFilePath = Path.Combine(Environment.GetFolderPath(
             Environment.SpecialFolder.ApplicationData), "QuickSpell", "settings.json");
@@ -71,15 +71,14 @@ namespace QuickSpell
             else
             {
                 SuggestionList.ItemsSource = new List<string>
-        {
-            $"1. Run on Startup: {(_settings.RunOnStartup ? "ON" : "OFF")}",
-            $"2. Keybind: {_settings.KeybindString}",
-            $"3. Theme: {(_settings.IsDarkTheme? "Dark" : "Light")}",
-            $"4. Menu Command: {_settings.MagicCommand}",
-            $"5. Exit QuickSpell",
-            "",
-            "(Enter to select, Esc to exit)"
-        };
+                {
+                    $"1. Run on Startup: {(_settings.RunOnStartup ? "ON" : "OFF")}",
+                    $"2. Keybind: {_settings.KeybindString}",
+                    $"3. Theme: {(_settings.IsDarkTheme? "Dark" : "Light")}",
+                    $"4. Menu Command: {_settings.MagicCommand}",
+                    $"5. Engine: {(_settings.UseDuckDuckGo ? "DuckDuckGo" : "Google")}",
+                    $"6. Exit QuickSpell   (Enter to select, Esc to close)"
+                };
             }
             SuggestionList.SelectedIndex = 0;
         }
@@ -145,7 +144,6 @@ namespace QuickSpell
             }
         }
 
-        // --- 3. REGISTER THE HOTKEY WHEN APP STARTS ---
         protected override void OnSourceInitialized(EventArgs e)
         {
             base.OnSourceInitialized(e);
@@ -156,7 +154,6 @@ namespace QuickSpell
             source.AddHook(HwndHook);
             RegisterHotKey(handle, HOTKEY_ID, _settings.HotkeyModifiers, _settings.HotkeyKey);
 
-            // --- SETUP SYSTEM TRAY ICON ---
             _trayIcon = new System.Windows.Forms.NotifyIcon();
             // This magically grabs your app's actual icon!
             _trayIcon.Icon = System.Drawing.Icon.ExtractAssociatedIcon(System.Reflection.Assembly.GetExecutingAssembly().Location);
@@ -173,14 +170,13 @@ namespace QuickSpell
 
             _trayIcon.ContextMenuStrip = contextMenu;
 
-            // NEW: Prove to the Microsoft Reviewer that the app launched!
+            // Prove to the Microsoft Reviewer that the app launched!
             if (!_settings.RunOnStartup) // Just a simple way to check if it's their first time
             {
                 System.Windows.MessageBox.Show("QuickSpell is running in the background!\n\nPress " + _settings.KeybindString + " anywhere to open the search bar.", "QuickSpell Started", MessageBoxButton.OK, MessageBoxImage.Information);
             }
         }
 
-        // --- 4. CATCH THE HOTKEY PRESS ---
         private IntPtr HwndHook(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
         {
             if (msg == WM_HOTKEY && wParam.ToInt32() == HOTKEY_ID)
@@ -211,24 +207,23 @@ namespace QuickSpell
             base.OnClosed(e);
         }
 
-        // --- 6. NEW: THE GAMER-LEVEL MEMORY FLUSH ---
         private void HideAndFlushMemory()
         {
-            // 1. Wipe the UI clean
+            // Wipe the UI clean
             SearchBox.Text = "";
             SuggestionList.ItemsSource = null;
 
-            // 2. FORCE WPF to instantly draw the blank screen before hiding
+            // FORCE WPF to instantly draw the blank screen before hiding
             this.UpdateLayout();
 
-            // 3. Now hide the window (Windows will cache a completely blank image)
+            // Now hide the window (Windows will cache a completely blank image)
             this.Hide();
 
-            // 4. Clean up unused objects
+            // Clean up unused objects
             GC.Collect();
             GC.WaitForPendingFinalizers();
 
-            // 5. Tell Windows to dump all idle memory to disk
+            // Tell Windows to dump all idle memory to disk
             SetProcessWorkingSetSize(System.Diagnostics.Process.GetCurrentProcess().Handle, (IntPtr)(-1), (IntPtr)(-1));
         }
 
@@ -238,15 +233,11 @@ namespace QuickSpell
             HideAndFlushMemory();
         }
 
-        // ---------------------------------------------------------
-        // GOOGLE API AND KEYBOARD LOGIC
-        // ---------------------------------------------------------
-
         private async void SearchBox_TextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e)
         {
             string query = SearchBox.Text.ToLower().Trim();
 
-            // 1. Check for the dynamic magic command
+            // Check for the dynamic magic command
             if (query == _settings.MagicCommand)
             {
                 _inSettingsMode = true;
@@ -254,36 +245,54 @@ namespace QuickSpell
                 return;
             }
 
-            // 2. Take us out of settings if they delete it
+            // Take us out of settings if they delete it
             if (_inSettingsMode && query != _settings.MagicCommand && !_isListeningForCommand)
             {
                 _inSettingsMode = false;
                 _isListeningForKeybind = false;
             }
 
-            // 3. NEW: If they are typing a new command, stop here! Don't ask Google.
+            // If they are typing a new command, stop here! Don't ask Google.
             if (_isListeningForCommand) return;
 
-            // --- EXISTING GOOGLE LOGIC ---
             if (string.IsNullOrWhiteSpace(query) || _inSettingsMode)
             {
-                SuggestionList.ItemsSource = null;
+                // If box is empty and we aren't in settings, show the 5 recent searches!
+                if (!_inSettingsMode && _settings.RecentSearches.Count > 0)
+                {
+                    SuggestionList.ItemsSource = _settings.RecentSearches;
+                    SuggestionList.SelectedIndex = 0;
+                }
+                else
+                {
+                    SuggestionList.ItemsSource = null;
+                }
                 return;
             }
 
             try
             {
-                string url = $"http://suggestqueries.google.com/complete/search?client=chrome&q={Uri.EscapeDataString(query)}";
+                // Swap the API endpoint based on their privacy setting
+                string url = _settings.UseDuckDuckGo
+                    ? $"https://duckduckgo.com/ac/?q={Uri.EscapeDataString(query)}"
+                    : $"http://suggestqueries.google.com/complete/search?client=chrome&q={Uri.EscapeDataString(query)}";
+
                 string response = await _httpClient.GetStringAsync(url);
 
                 using (JsonDocument doc = JsonDocument.Parse(response))
                 {
-                    var suggestions = doc.RootElement[1];
                     var list = new List<string>();
 
-                    foreach (var item in suggestions.EnumerateArray())
+                    if (_settings.UseDuckDuckGo)
                     {
-                        list.Add(item.GetString());
+                        foreach (var item in doc.RootElement.EnumerateArray())
+                            list.Add(item.GetProperty("phrase").GetString());
+                    }
+                    else
+                    {
+                        var suggestions = doc.RootElement[1];
+                        foreach (var item in suggestions.EnumerateArray())
+                            list.Add(item.GetString());
                     }
 
                     SuggestionList.ItemsSource = list;
@@ -295,7 +304,6 @@ namespace QuickSpell
 
         private void SearchBox_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
         {
-            // --- FEATURE 1: CAPTURE NEW KEYBIND ---
             if (_isListeningForKeybind)
             {
                 e.Handled = true; // Stop the key from typing into the box
@@ -313,7 +321,6 @@ namespace QuickSpell
                     (e.Key == Key.System && (e.SystemKey == Key.LeftAlt || e.SystemKey == Key.RightAlt)))
                     return;
 
-                // Figure out which modifiers they are holding
                 uint modifiers = 0;
                 string keyStr = "";
                 if (Keyboard.Modifiers.HasFlag(ModifierKeys.Control)) { modifiers |= 0x0002; keyStr += "Ctrl + "; }
@@ -334,14 +341,13 @@ namespace QuickSpell
                 _settings.HotkeyModifiers = modifiers;
                 _settings.HotkeyKey = vk;
                 _settings.KeybindString = keyStr;
-                SaveSettings(); // <-- ADD THIS
+                SaveSettings();
 
                 _isListeningForKeybind = false;
                 RenderSettingsMenu();
                 return;
             }
 
-            // --- FEATURE 2: CAPTURE NEW MENU COMMAND ---
             if (_isListeningForCommand)
             {
                 if (e.Key == Key.Enter)
@@ -366,7 +372,6 @@ namespace QuickSpell
                 return;
             }
 
-            // --- NORMAL APP LOGIC ---
             if (e.Key == Key.Down)
             {
                 if (SuggestionList.SelectedIndex < SuggestionList.Items.Count - 1)
@@ -407,7 +412,13 @@ namespace QuickSpell
                         SearchBox.Text = ""; // Clear box so they can type the new command
                         RenderSettingsMenu();
                     }
-                    else if (SuggestionList.SelectedIndex == 4) // Exit QuickSpell
+                    else if (SuggestionList.SelectedIndex == 4) // Engine Swap
+                    {
+                        _settings.UseDuckDuckGo = !_settings.UseDuckDuckGo;
+                        SaveSettings();
+                        RenderSettingsMenu();
+                    }
+                    else if (SuggestionList.SelectedIndex == 5) // Exit QuickSpell
                     {
                         System.Windows.Application.Current.Shutdown(); // This fully kills the app!
                     }
@@ -415,7 +426,40 @@ namespace QuickSpell
                 }
                 else if (SuggestionList.SelectedItem != null)
                 {
-                    System.Windows.Clipboard.SetText(SuggestionList.SelectedItem.ToString());
+                    string selectedText = SuggestionList.SelectedItem.ToString();
+
+                    // Remove it if it already exists so we don't get duplicates, then put it at the top
+                    if (_settings.RecentSearches.Contains(selectedText))
+                        _settings.RecentSearches.Remove(selectedText);
+
+                    _settings.RecentSearches.Insert(0, selectedText);
+
+                    // Keep the cache strictly at 5 items max for zero memory bloat
+                    if (_settings.RecentSearches.Count > 5)
+                        _settings.RecentSearches.RemoveAt(5);
+
+                    SaveSettings();
+
+                    if (Keyboard.Modifiers.HasFlag(ModifierKeys.Shift))
+                    {
+                        // Construct the full search URL based on their engine choice
+                        string searchUrl = _settings.UseDuckDuckGo
+                            ? $"https://duckduckgo.com/?q={Uri.EscapeDataString(selectedText)}"
+                            : $"https://www.google.com/search?q={Uri.EscapeDataString(selectedText)}";
+
+                        // the heavy lifting, instantly freeing up QuickSpell's memory.
+                        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                        {
+                            FileName = searchUrl,
+                            UseShellExecute = true
+                        });
+                    }
+                    else
+                    {
+                        // Normal behavior: Copy to clipboard
+                        Clipboard.SetText(selectedText);
+                    }
+
                     HideAndFlushMemory();
                 }
             }
