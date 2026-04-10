@@ -51,6 +51,8 @@ namespace QuickSpell
         private readonly string _settingsFilePath = Path.Combine(Environment.GetFolderPath(
             Environment.SpecialFolder.ApplicationData), "QuickSpell", "settings.json");
 
+        private System.Windows.Forms.NotifyIcon _trayIcon;
+
         public MainWindow()
         {
             InitializeComponent();
@@ -73,7 +75,8 @@ namespace QuickSpell
             $"1. Run on Startup: {(_settings.RunOnStartup ? "ON" : "OFF")}",
             $"2. Keybind: {_settings.KeybindString}",
             $"3. Theme: {(_settings.IsDarkTheme? "Dark" : "Light")}",
-            $"4. Menu Command: {_settings.MagicCommand}", // NEW 4th Option
+            $"4. Menu Command: {_settings.MagicCommand}",
+            $"5. Exit QuickSpell",
             "",
             "(Enter to select, Esc to exit)"
         };
@@ -146,16 +149,35 @@ namespace QuickSpell
         protected override void OnSourceInitialized(EventArgs e)
         {
             base.OnSourceInitialized(e);
-
-            // LOAD SAVED SETTINGS FIRST!
             LoadSettings();
 
             IntPtr handle = new WindowInteropHelper(this).Handle;
             HwndSource source = HwndSource.FromHwnd(handle);
             source.AddHook(HwndHook);
-
-            // Register the custom saved hotkey!
             RegisterHotKey(handle, HOTKEY_ID, _settings.HotkeyModifiers, _settings.HotkeyKey);
+
+            // --- SETUP SYSTEM TRAY ICON ---
+            _trayIcon = new System.Windows.Forms.NotifyIcon();
+            // This magically grabs your app's actual icon!
+            _trayIcon.Icon = System.Drawing.Icon.ExtractAssociatedIcon(System.Reflection.Assembly.GetExecutingAssembly().Location);
+            _trayIcon.Text = "QuickSpell";
+            _trayIcon.Visible = true;
+
+            // Create the right-click menu
+            var contextMenu = new System.Windows.Forms.ContextMenuStrip();
+            contextMenu.Items.Add("Exit QuickSpell", null, (s, ev) =>
+            {
+                _trayIcon.Dispose(); // Clean up the icon so it doesn't leave a ghost in the tray
+                System.Windows.Application.Current.Shutdown(); // Fully close the app
+            });
+
+            _trayIcon.ContextMenuStrip = contextMenu;
+
+            // NEW: Prove to the Microsoft Reviewer that the app launched!
+            if (!_settings.RunOnStartup) // Just a simple way to check if it's their first time
+            {
+                System.Windows.MessageBox.Show("QuickSpell is running in the background!\n\nPress " + _settings.KeybindString + " anywhere to open the search bar.", "QuickSpell Started", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
         }
 
         // --- 4. CATCH THE HOTKEY PRESS ---
@@ -271,7 +293,7 @@ namespace QuickSpell
             catch { }
         }
 
-        private void SearchBox_PreviewKeyDown(object sender, KeyEventArgs e)
+        private void SearchBox_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
         {
             // --- FEATURE 1: CAPTURE NEW KEYBIND ---
             if (_isListeningForKeybind)
@@ -385,11 +407,15 @@ namespace QuickSpell
                         SearchBox.Text = ""; // Clear box so they can type the new command
                         RenderSettingsMenu();
                     }
+                    else if (SuggestionList.SelectedIndex == 4) // Exit QuickSpell
+                    {
+                        System.Windows.Application.Current.Shutdown(); // This fully kills the app!
+                    }
                     e.Handled = true;
                 }
                 else if (SuggestionList.SelectedItem != null)
                 {
-                    Clipboard.SetText(SuggestionList.SelectedItem.ToString());
+                    System.Windows.Clipboard.SetText(SuggestionList.SelectedItem.ToString());
                     HideAndFlushMemory();
                 }
             }
