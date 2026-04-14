@@ -29,5 +29,7 @@ To contribute:
 2. Create your feature branch.
 3. Submit a PR with a clear description of your changes!
 
+![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
+
 ## Contact
 For questions or support, please reach out via the [issues page](https://github.com/Dreem-R/QuickSpell/issues).
