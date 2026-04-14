@@ -9,7 +9,7 @@
   <Identity
     Name="RuchakKhatri.5423821B14FA6"
     Publisher="CN=C0EE9F82-01A8-4A36-9DE4-47969C3A3D46"
-    Version="1.0.8.0" />
+    Version="1.1.9.0" />
 
   <Properties>
     <DisplayName>QuickSpell</DisplayName>

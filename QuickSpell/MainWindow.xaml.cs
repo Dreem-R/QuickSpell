@@ -47,6 +47,9 @@ namespace QuickSpell
         private bool _isListeningForKeybind = false;
         private bool _isListeningForCommand = false;
 
+        private const string ADMIN_COMMAND = "//quickspell";
+        private int _currentSearchId = 0;
+
         private AppSettings _settings = new AppSettings();
         private readonly string _settingsFilePath = Path.Combine(Environment.GetFolderPath(
             Environment.SpecialFolder.ApplicationData), "QuickSpell", "settings.json");
@@ -155,8 +158,14 @@ namespace QuickSpell
             RegisterHotKey(handle, HOTKEY_ID, _settings.HotkeyModifiers, _settings.HotkeyKey);
 
             _trayIcon = new System.Windows.Forms.NotifyIcon();
-            // This magically grabs your app's actual icon!
-            _trayIcon.Icon = System.Drawing.Icon.ExtractAssociatedIcon(System.Reflection.Assembly.GetExecutingAssembly().Location);
+
+            // Grab the baked-in .ico file directly from memory
+            var iconUri = new Uri("pack://application:,,,/logo.ico", UriKind.RelativeOrAbsolute);
+            using (var stream = System.Windows.Application.GetResourceStream(iconUri).Stream)
+            {
+                _trayIcon.Icon = new System.Drawing.Icon(stream);
+            }
+
             _trayIcon.Text = "QuickSpell";
             _trayIcon.Visible = true;
 
@@ -237,27 +246,29 @@ namespace QuickSpell
         {
             string query = SearchBox.Text.ToLower().Trim();
 
-            // Check for the dynamic magic command
-            if (query == _settings.MagicCommand)
+            // Grab a unique ID for THIS specific keystroke
+            int mySearchId = ++_currentSearchId;
+
+            // 1. Check for the dynamic magic command OR the permanent Admin Command
+            if (query == _settings.MagicCommand || query == ADMIN_COMMAND)
             {
                 _inSettingsMode = true;
                 RenderSettingsMenu();
                 return;
             }
 
-            // Take us out of settings if they delete it
-            if (_inSettingsMode && query != _settings.MagicCommand && !_isListeningForCommand)
+            // 2. Take us out of settings if they delete it
+            if (_inSettingsMode && query != _settings.MagicCommand && query != ADMIN_COMMAND && !_isListeningForCommand)
             {
                 _inSettingsMode = false;
                 _isListeningForKeybind = false;
             }
 
-            // If they are typing a new command, stop here! Don't ask Google.
+            // 3. If they are typing a new command, stop here! Don't ask Google.
             if (_isListeningForCommand) return;
 
             if (string.IsNullOrWhiteSpace(query) || _inSettingsMode)
             {
-                // If box is empty and we aren't in settings, show the 5 recent searches!
                 if (!_inSettingsMode && _settings.RecentSearches.Count > 0)
                 {
                     SuggestionList.ItemsSource = _settings.RecentSearches;
@@ -272,12 +283,16 @@ namespace QuickSpell
 
             try
             {
-                // Swap the API endpoint based on their privacy setting
                 string url = _settings.UseDuckDuckGo
                     ? $"https://duckduckgo.com/ac/?q={Uri.EscapeDataString(query)}"
                     : $"http://suggestqueries.google.com/complete/search?client=chrome&q={Uri.EscapeDataString(query)}";
 
+                // We wait for the internet here...
                 string response = await _httpClient.GetStringAsync(url);
+
+                // THE ASYNC FIX: If the user kept typing while we were waiting for the internet, 
+                // or if they magically entered settings mode, ABORT! Do not overwrite the screen!
+                if (mySearchId != _currentSearchId || _inSettingsMode) return;
 
                 using (JsonDocument doc = JsonDocument.Parse(response))
                 {
@@ -459,7 +474,6 @@ namespace QuickSpell
                         // Normal behavior: Copy to clipboard
                         Clipboard.SetText(selectedText);
                     }
-
                     HideAndFlushMemory();
                 }
             }

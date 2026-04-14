@@ -12,4 +12,12 @@
     <Platforms>AnyCPU;x64</Platforms>
   </PropertyGroup>
 
+  <ItemGroup>
+    <None Remove="Logo.ico" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Resource Include="Logo.ico" />
+  </ItemGroup>
+
 </Project>
