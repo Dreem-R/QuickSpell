@@ -4,6 +4,7 @@ using Microsoft.Win32;
 using System.Collections.Generic;
 using System.Net.Http;
 using System.Text.Json;
+using System.Threading;
 using System.Windows;
 using System.Windows.Input;
 using System.Runtime.InteropServices;
@@ -56,8 +57,21 @@ namespace QuickSpell
 
         private System.Windows.Forms.NotifyIcon _trayIcon;
 
+        private static Mutex? _mutex = null;
+
         public MainWindow()
         {
+            // Check if another instance is running BEFORE doing anything else
+            bool createdNew;
+            _mutex = new Mutex(true, "QuickSpell_Unique_App_Mutex", out createdNew);
+
+            if (!createdNew)
+            {
+                // App is already running! Silently kill this duplicate instance.
+                System.Windows.Application.Current.Shutdown();
+                return;
+            }
+
             InitializeComponent();
         }
 
@@ -114,8 +128,12 @@ namespace QuickSpell
                 RegistryKey rk = Registry.CurrentUser.OpenSubKey("SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run", true);
                 if (_settings.RunOnStartup)
                 {
-                    // Gets the exact location of your QuickSpell.exe and tells Windows to run it
-                    rk.SetValue("QuickSpell", System.Reflection.Assembly.GetExecutingAssembly().Location);
+                    // FIXED: Use Environment.ProcessPath instead of Assembly Location for Single-File apps!
+                    string exePath = Environment.ProcessPath;
+                    if (!string.IsNullOrEmpty(exePath))
+                    {
+                        rk.SetValue("QuickSpell", exePath);
+                    }
                 }
                 else
                 {
@@ -198,7 +216,23 @@ namespace QuickSpell
                 _isListeningForKeybind = false;
                 _isListeningForCommand = false;
 
-                // NOW show the window (it will already be blank from when we hid it!)
+                // Because the text box is already empty, TextChanged won't fire. We do it here.
+                if (_settings.RecentSearches.Count > 0)
+                {
+                    var emptyStateList = new List<string>(_settings.RecentSearches);
+                    emptyStateList.Add($"💡 Tip: Type {_settings.MagicCommand} to open settings.");
+
+                    SuggestionList.ItemsSource = emptyStateList;
+                    SuggestionList.SelectedIndex = 0;
+                }
+                else
+                {
+                    // The Empty State Hint for people who don't read manuals!
+                    SuggestionList.ItemsSource = new List<string> { $"💡 Tip: Type {_settings.MagicCommand} to open settings." };
+                }
+                // -------------------------------------------------
+
+                // NOW show the window
                 this.Show();
                 this.Activate();
                 SearchBox.Focus();
